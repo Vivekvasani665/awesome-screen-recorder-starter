@@ -1,10 +1,11 @@
-import {ICONS,fillIcons,waveBars,clock,pad} from "./icons.js";
+import {ICONS,fillIcons,waveBars,clock} from "./icons.js";
 import {getSettings,saveSettings} from "../lib/settings.js";
 import {removeHistory} from "../lib/history.js";
+import {esc,size,duration,hasShareLink,shareCard,shareActions,miniCopy,bindShareActions,driveFileUrl} from "./share-card.js";
 
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
-const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+const CARD_MAX_AGE=60*60*1000; // the main view's result card shows the latest upload for up to an hour
 const isPage=new URLSearchParams(location.search).get("view")==="settings"; // opened as the options page
 
 let S={};            // chrome.storage.local snapshot
@@ -28,19 +29,15 @@ function ago(t){
   const d=Math.round(h/24); return d<7?`${d} day${d>1?"s":""} ago`:new Date(t).toLocaleDateString();
 }
 const date=t=>new Date(t).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"});
-function size(b){
-  if(!b) return "";
-  const u=["B","KB","MB","GB"];let i=0;while(b>=1024&&i<u.length-1){b/=1024;i++}
-  return `${b.toFixed(i>1?1:0)} ${u[i]}`;
-}
-const duration=ms=>{const s=Math.round(ms/1000);return s>=3600?clock(ms):`${pad(Math.floor(s/60))}:${pad(s%60)}`};
 
 function activityTitle(e){
   const what=e.kind==="recording"?"Recording":"Screenshot";
-  return {uploaded:`${what} uploaded`,local:`${what} saved`,uploading:`Uploading ${what.toLowerCase()}… ${e.progress||0}%`,
+  return {uploaded:hasShareLink(e)?`${what} ready`:`${what} uploaded`,local:`${what} saved`,uploading:`Uploading ${what.toLowerCase()}… ${e.progress||0}%`,
+    sharing:"Generating share link…",share_failed:e.sharePolicy?"Uploaded — public sharing blocked":"Uploaded — link not generated",
     saving:`Saving ${what.toLowerCase()}…`,failed:`${what} failed`}[e.status]||what;
 }
-const pillText=e=>({uploaded:"Uploaded",local:"Saved locally",uploading:`Uploading ${e.progress||0}%`,saving:"Saving…",failed:"Failed"})[e.status]||"";
+const pillText=e=>({uploaded:hasShareLink(e)?"Uploaded ✓":"Uploaded",local:"Saved locally",uploading:`Uploading ${e.progress||0}%`,
+  sharing:"Generating link…",share_failed:e.sharePolicy?"Sharing blocked":"Link failed",saving:"Saving…",failed:"Failed"})[e.status]||"";
 
 // ---------- toast / banner ----------
 function toast(title,text){
@@ -71,6 +68,7 @@ function render(){
   document.body.classList.toggle("recording",current==="recording");
   if(current==="main") renderMain();
   if(current==="recording") renderRecording();
+  if(current==="capturing") renderCapturing();
   if(current==="settings") renderSettings();
   if(current==="history") renderHistory();
 }
@@ -91,11 +89,15 @@ function renderMain(){
   $("#record strong").textContent=S.saving?"Saving recording…":picking?"Choose what to record…":"Record Screen";
   $("#record small").textContent=S.saving?"Wait for the upload to finish":picking?"Finish in the recorder window":"Capture your screen";
 
+  const latest=(S.history||[])[0];
+  const showCard=latest&&(latest.fileId||latest.status==="uploading")&&latest.id!==S.dismissedCard&&Date.now()-latest.createdAt<CARD_MAX_AGE;
+  $("#shareSlot").innerHTML=showCard?shareCard(latest):"";
+
   const items=(S.history||[]).slice(0,3);
   $("#recentList").innerHTML=items.length?items.map(e=>`
-    <li data-id="${esc(e.id)}" title="${esc(e.error||e.name)}">
+    <li data-id="${esc(e.id)}" title="${esc(e.error||e.shareError||e.name)}">
       <span class="a-ico${e.status==="failed"?" failed":""}">${ICONS[e.kind==="recording"?"video":"image"]}</span>
-      <div><strong>${esc(activityTitle(e))}</strong><small>${esc(ago(e.createdAt))}</small></div>
+      <div style="flex:1;min-width:0"><strong>${esc(activityTitle(e))}</strong><small>${esc(ago(e.createdAt))}</small></div>${miniCopy(e)}
     </li>`).join("")
     :`<li class="empty" style="cursor:default"><div style="width:100%"><strong>No recent activity</strong>Your recordings and screenshots will appear here.</div></li>`;
 }
@@ -113,6 +115,11 @@ function renderRecording(){
   $("#infoMic").textContent=info.mic?"On":"Off";
   $("#infoAudio").textContent=info.systemAudio?"On":"Off";
   tick();
+}
+const SHOT_STAGE={uploading:["Uploading screenshot…","Saving your screenshot to Google Drive."],sharing:["Generating share link…","Making the file viewable by anyone with the link."]};
+function renderCapturing(){
+  const [t,x]=SHOT_STAGE[S.shotStage]||["Capturing screenshot…","Please wait while we capture your current tab."];
+  $("#view-capturing h2").textContent=t;$("#view-capturing .capture p").textContent=x;
 }
 function tick(){
   if(!S.recording||!S.startedAt) return;
@@ -133,15 +140,20 @@ function renderSettings(){
 }
 
 function renderHistory(){
-  $$(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===historyTab));
+  const shareHandlers={find:findItem,notify:toast,fail:banner,
+  dismiss:id=>chrome.storage.local.set({dismissedCard:id}),
+  openDrive:e=>chrome.tabs.create({url:driveFileUrl(e)})};
+bindShareActions($("#view-main"),shareHandlers);
+bindShareActions($("#view-history"),{...shareHandlers,fail:(t,x)=>{go("main");banner(t,x)}});
+$$(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===historyTab));
   const items=(S.history||[]).filter(e=>e.kind===historyTab);
   $("#historyList").innerHTML=items.length?items.map(e=>{
     const meta=[date(e.createdAt),size(e.size),e.duration?duration(e.duration):""].filter(Boolean).join(" • ");
     const thumb=e.thumb?`<img class="thumb" src="${esc(e.thumb)}" alt="">`
       :`<span class="thumb thumb-ph"><span>${ICONS[e.kind==="recording"?"video":"image"]}</span></span>`;
-    const bar=e.status==="uploading"?`<div class="bar"><i style="width:${e.progress||0}%"></i></div>`:"";
-    return `<li data-id="${esc(e.id)}" title="${esc(e.error||"")}">${thumb}
-      <div class="h-body"><strong>${esc(e.name)}</strong><small>${esc(meta)}</small><span class="pill ${esc(e.status)}">${esc(pillText(e))}</span>${bar}</div>
+    const bar=e.status==="uploading"?`<div class="bar" style="width:100%"><i style="width:${e.progress||0}%"></i></div>`:"";
+    return `<li data-id="${esc(e.id)}" title="${esc(e.error||e.shareError||"")}">${thumb}
+      <div class="h-body"><strong style="max-width:100%">${esc(e.name)}</strong><small>${esc(meta)}</small><span class="pill ${esc(e.status)}">${esc(pillText(e))}</span>${bar}${shareActions(e,{compact:true})}</div>
       <button class="more" data-menu="${esc(e.id)}" aria-label="More actions">${ICONS.more}</button></li>`;
   }).join("")
   :`<li class="empty" style="cursor:default;border:0"><div style="width:100%"><strong>No ${historyTab==="recording"?"recordings":"screenshots"} yet</strong>They will appear here after you capture them.</div></li>`;
@@ -151,7 +163,7 @@ function renderHistory(){
 const findItem=id=>(S.history||[]).find(e=>e.id===id);
 async function openItem(e){
   if(!e) return;
-  if(e.webViewLink) return chrome.tabs.create({url:e.webViewLink});
+  if(e.fileId||e.webViewLink) return chrome.tabs.create({url:hasShareLink(e)?e.webViewLink:e.webViewLink||driveFileUrl(e)});
   if(e.downloadId!=null){try{chrome.downloads.show(e.downloadId);return}catch{}}
   if(e.error) banner(e.status==="failed"?"Save failed":"Upload failed",e.error);
 }
@@ -159,7 +171,7 @@ async function openItem(e){
 function closeMenu(){$("#menu").classList.add("hidden")}
 function openMenu(btn,e){
   const opts=[];
-  if(e.webViewLink) opts.push(["external","Open in Google Drive",()=>chrome.tabs.create({url:e.webViewLink})]);
+  if(e.fileId||e.webViewLink) opts.push(["external","Open in Google Drive",()=>chrome.tabs.create({url:e.webViewLink||driveFileUrl(e)})]);
   if(e.downloadId!=null) opts.push(["folder","Show in folder",()=>chrome.downloads.show(e.downloadId)]);
   opts.push(["trash","Remove from history",()=>removeHistory(e.id),"danger"]);
   const m=$("#menu");
@@ -200,8 +212,9 @@ $("#screenshot").onclick=async()=>{
     const r=await send("SCREENSHOT");
     if(view!=="capturing"||r.cancelled) return;
     go("main");
+    // Drive uploads are reported by the result card (ready / link failed) at the top of the main view.
     if(r.warning) banner("Google Drive upload failed",r.warning);
-    else toast("Screenshot saved",r.where==="drive"?"Your file has been uploaded to Google Drive.":"Saved to your Downloads folder.");
+    else if(r.where!=="drive") toast("Screenshot saved","Saved to your Downloads folder.");
   }catch(e){
     if(view!=="capturing") return;
     go("main");banner("Screenshot failed",e.message);
@@ -212,12 +225,18 @@ $("#cancelShot").onclick=()=>{send("CANCEL_SCREENSHOT").catch(()=>{});go("main")
 $("#pause").onclick=()=>chrome.runtime.sendMessage({type:"REC_PAUSE"}).catch(()=>banner("Recorder window not found",""));
 $("#stop").onclick=()=>chrome.runtime.sendMessage({type:"REC_STOP"}).catch(()=>banner("Recorder window not found",""));
 
-$("#recentList").onclick=ev=>{const li=ev.target.closest("li[data-id]");if(li) openItem(findItem(li.dataset.id))};
+$("#recentList").onclick=ev=>{if(ev.target.closest("[data-act]")) return;const li=ev.target.closest("li[data-id]");if(li) openItem(findItem(li.dataset.id))};
 $("#historyList").onclick=ev=>{
+  if(ev.target.closest("[data-act]")) return;
   const more=ev.target.closest("[data-menu]");
   if(more){ev.stopPropagation();openMenu(more,findItem(more.dataset.menu));return}
   const li=ev.target.closest("li[data-id]");if(li) openItem(findItem(li.dataset.id));
 };
+const shareHandlers={find:findItem,notify:toast,fail:banner,
+  dismiss:id=>chrome.storage.local.set({dismissedCard:id}),
+  openDrive:e=>chrome.tabs.create({url:driveFileUrl(e)})};
+bindShareActions($("#view-main"),shareHandlers);
+bindShareActions($("#view-history"),{...shareHandlers,fail:(t,x)=>{go("main");banner(t,x)}});
 $$(".tab").forEach(t=>t.onclick=()=>{historyTab=t.dataset.tab;renderHistory()});
 
 for(const el of $$("[data-setting]")){
@@ -245,7 +264,7 @@ $("#driveToggle").onclick=async()=>{
 };
 
 // ---------- boot ----------
-const KEYS=["recording","saving","paused","startedAt","pausedAt","totalPaused","recorderWindowId","recInfo","driveConnected","driveEmail","rootFolderId","folderPrefix","history"];
+const KEYS=["shotStage","dismissedCard","recording","saving","paused","startedAt","pausedAt","totalPaused","recorderWindowId","recInfo","driveConnected","driveEmail","rootFolderId","folderPrefix","history"];
 async function load(){S=await chrome.storage.local.get(KEYS);settings=await getSettings()}
 
 chrome.storage.onChanged.addListener(async(changes,area)=>{

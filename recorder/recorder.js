@@ -1,7 +1,8 @@
-import {saveFile} from "../lib/drive.js";
+import {saveFile,shareUploadedFile} from "../lib/drive.js";
 import {getSettings} from "../lib/settings.js";
-import {addHistory,updateHistory,makeThumb,stamp} from "../lib/history.js";
+import {addHistory,updateHistory,getHistory,makeThumb,stamp} from "../lib/history.js";
 import {ICONS,fillIcons,waveBars,clock} from "../popup/icons.js";
+import {shareCard,bindShareActions,driveFileUrl} from "../popup/share-card.js";
 
 const $=s=>document.querySelector(s);
 const msg=(t,type="")=>{const e=$("#message");e.textContent=t;e.className=`rec-msg ${type}`};
@@ -143,11 +144,25 @@ async function finish(){
 
   try{
     const r=await saveFile({blob,url,name,mimeType:format.type,kind:"recordings",onProgress});
-    await update({status:r.where==="drive"?"uploaded":"local",progress:100,webViewLink:r.webViewLink,downloadId:r.downloadId,error:r.warning});
-    $("#status").textContent="Done";
-    $("#sub").textContent=r.where==="drive"?"Uploaded to Google Drive":"Saved to Downloads";
-    if(r.warning) msg(r.warning,"error");
-    else msg(r.where==="drive"?"Recording uploaded to Google Drive. You can close this window.":"Recording saved to your Downloads folder. You can close this window.","ok");
+    if(r.where==="drive"){
+      // Uploaded → make it viewable by link. "Ready" is only shown once permission + metadata succeed.
+      $("#progress").classList.add("hidden");
+      $("#status").textContent="Generating share link…";
+      $("#sub").textContent="Uploaded to Google Drive";
+      msg("Generating share link…");
+      await update({status:"sharing",progress:100,fileId:r.fileId,driveUrl:r.webViewLink,downloadId:r.downloadId});
+      showCard(id);
+      await update(await shareUploadedFile(r.fileId));
+      const e=await showCard(id);
+      $("#status").textContent=e?.status==="uploaded"?"Recording ready":"Uploaded";
+      msg("You can close this window. The link is also saved in History.","ok");
+    }else{
+      await update({status:"local",progress:100,downloadId:r.downloadId,error:r.warning});
+      $("#status").textContent="Done";
+      $("#sub").textContent="Saved to Downloads";
+      if(r.warning) msg(r.warning,"error");
+      else msg("Recording saved to your Downloads folder. You can close this window.","ok");
+    }
   }catch(e){
     await update({status:"failed",error:e.message});
     $("#status").textContent="Failed";
@@ -158,6 +173,21 @@ async function finish(){
   await chrome.storage.local.set({saving:false,recorderWindowId:null});
   recorder=null;display=null;mic=null;chunks=[];
 }
+
+// Result card for this recording; stays in sync with History (e.g. after Retry Link).
+let card=null;
+async function showCard(id){
+  card=(await getHistory()).find(x=>x.id===id)||null;
+  $("#shareSlot").innerHTML=card?shareCard(card,{dismissible:false}):"";
+  return card;
+}
+chrome.storage.onChanged.addListener((c,area)=>{if(area==="local"&&c.history&&card) showCard(card.id)});
+bindShareActions($("#shareSlot"),{
+  find:id=>card?.id===id?card:null,
+  notify:t=>msg(t,"ok"),
+  fail:(t,x)=>msg(x?`${t} ${x}`:t,"error"),
+  openDrive:e=>chrome.tabs.create({url:driveFileUrl(e)}),
+});
 
 chrome.runtime.onMessage.addListener((m,s,send)=>{
   if(m?.type==="REC_PAUSE"){togglePause().then(()=>send({ok:true}));return true}
