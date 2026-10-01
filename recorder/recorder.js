@@ -1,4 +1,4 @@
-import {saveFile,shareUploadedFile} from "../lib/drive.js";
+import {saveFile} from "../lib/drive.js";
 import {getSettings} from "../lib/settings.js";
 import {addHistory,updateHistory,getHistory,makeThumb,stamp} from "../lib/history.js";
 import {ICONS,fillIcons,waveBars,clock} from "../popup/icons.js";
@@ -127,7 +127,8 @@ async function finish(){
   const name=`Screen Recording ${stamp()}.${format.ext}`;
   const {driveConnected}=await chrome.storage.local.get("driveConnected");
   const uploading=driveConnected&&settings.autoUpload;
-  const id=await addHistory({kind:"recording",name,size:blob.size,duration:length,thumb,status:uploading?"uploading":"saving",progress:0});
+  // Link first: "sharing" (creating the Drive file + link) → "uploading" with the link already usable → "uploaded".
+  const id=await addHistory({kind:"recording",name,size:blob.size,duration:length,thumb,status:uploading?"sharing":"saving",progress:0});
 
   // Serialise history writes so a late progress update can't overwrite the final status.
   let queue=Promise.resolve();
@@ -139,25 +140,30 @@ async function finish(){
     $("#sub").textContent=`Uploading to Google Drive… ${pct}%`;
     if(pct-lastPct>=5||pct===100){lastPct=pct;update({progress:pct})}
   };
-  if(uploading){$("#progress").classList.remove("hidden");$("#sub").textContent="Uploading to Google Drive…"}
-  msg(uploading?"Uploading — keep this window open until it finishes.":"Saving recording…");
+  if(uploading){
+    $("#status").textContent="Generating share link…";
+    $("#sub").textContent="Creating your Google Drive link…";
+    msg("Keep this window open until the upload finishes.");
+    showCard(id);
+  }else msg("Saving recording…");
+  const onLink=async({fileId,driveUrl,share})=>{
+    await update({status:"uploading",fileId,driveUrl,...share});
+    $("#progress").classList.remove("hidden");
+    $("#status").textContent=share.shared?"Link ready — uploading…":"Uploading…";
+    $("#sub").textContent="Uploading to Google Drive…";
+  };
 
   try{
-    const r=await saveFile({blob,url,name,mimeType:format.type,kind:"recordings",onProgress});
+    const r=await saveFile({blob,url,name,mimeType:format.type,kind:"recordings",onProgress,onLink});
     if(r.where==="drive"){
-      // Uploaded → make it viewable by link. "Ready" is only shown once permission + metadata succeed.
-      $("#progress").classList.add("hidden");
-      $("#status").textContent="Generating share link…";
-      $("#sub").textContent="Uploaded to Google Drive";
-      msg("Generating share link…");
-      await update({status:"sharing",progress:100,fileId:r.fileId,driveUrl:r.webViewLink,downloadId:r.downloadId});
-      showCard(id);
-      await update(await shareUploadedFile(r.fileId));
+      await update({status:r.share.shared?"uploaded":"share_failed",progress:100,downloadId:r.downloadId});
       const e=await showCard(id);
       $("#status").textContent=e?.status==="uploaded"?"Recording ready":"Uploaded";
+      $("#sub").textContent="Uploaded to Google Drive";
       msg("You can close this window. The link is also saved in History.","ok");
     }else{
-      await update({status:"local",progress:100,downloadId:r.downloadId,error:r.warning});
+      await update({status:"local",progress:100,downloadId:r.downloadId,error:r.warning,fileId:null,driveUrl:null,shared:false,webViewLink:null});
+      $("#shareSlot").innerHTML="";
       $("#status").textContent="Done";
       $("#sub").textContent="Saved to Downloads";
       if(r.warning) msg(r.warning,"error");

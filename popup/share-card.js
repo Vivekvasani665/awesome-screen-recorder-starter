@@ -1,4 +1,4 @@
-// "Recording ready / Screenshot ready" card and the Copy Link / Open / Retry Link actions,
+// "Recording ready / Screenshot ready" card and the Copy Link / Share / Open / Retry Link actions,
 // shared by the popup and the recorder window.
 import {ICONS,clock,pad} from "./icons.js";
 
@@ -10,8 +10,9 @@ export function size(b){
 }
 export const duration=ms=>{const s=Math.round(ms/1000);return s>=3600?clock(ms):`${pad(Math.floor(s/60))}:${pad(s%60)}`};
 
-// A shareable item is one whose public permission was created by this extension.
-export const hasShareLink=e=>e?.status==="uploaded"&&e.shared&&!!e.webViewLink;
+// A shareable item is one whose public permission was created by this extension. The link exists
+// before the upload finishes (link-first), so it is usable while "uploading" as well as once "uploaded".
+export const hasShareLink=e=>(e?.status==="uploaded"||e?.status==="uploading")&&!!e.shared&&!!e.webViewLink;
 export const SHARE_FAILED="File uploaded, but share link could not be generated.";
 export const SHARE_BLOCKED="Your Google Drive account does not allow public link sharing.";
 
@@ -22,6 +23,7 @@ export function shareActions(e,{compact=false}={}){
   const id=esc(e.id);
   if(hasShareLink(e)) return `<div class="share-actions${compact?" compact":""}">
     <button class="btn btn-primary btn-sm" data-act="copy" data-id="${id}"><span class="ico-sm" data-i="link">${ICONS.link}</span><span data-label>Copy Link</span></button>
+    <button class="btn btn-outline btn-sm" data-act="share" data-id="${id}"><span class="ico-sm">${ICONS.share}</span><span>Share</span></button>
     <button class="btn btn-outline btn-sm" data-act="open" data-id="${id}"><span class="ico-sm">${ICONS.external}</span><span>Open</span></button></div>`;
   if(e.status==="share_failed") return `<div class="share-actions${compact?" compact":""}">
     <button class="btn btn-outline btn-sm" data-act="drive" data-id="${id}"><span class="ico-sm">${ICONS.drive}</span><span>Open Drive</span></button>
@@ -34,8 +36,11 @@ export function shareCard(e,{dismissible=true}={}){
   const close=dismissible?`<button class="card-x" data-act="dismiss" data-id="${esc(e.id)}" aria-label="Dismiss">${ICONS.x}</button>`:"";
   let icon,title,body="",foot="";
   if(e.status==="uploading"){
-    icon=`<span class="sc-ico busy"><i class="mini-spin"></i></span>`;title=`Uploading… ${e.progress||0}%`;
+    const linked=hasShareLink(e);
+    icon=linked?`<span class="sc-ico ok">${ICONS.link}</span>`:`<span class="sc-ico busy"><i class="mini-spin"></i></span>`;
+    title=linked?`Link ready — uploading ${e.progress||0}%`:`Uploading… ${e.progress||0}%`;
     body=`<div class="bar"><i style="width:${e.progress||0}%"></i></div>`;
+    if(linked) foot=`<p class="sc-foot"><span class="ico-sm">${ICONS.globe}</span>Share it now — it opens once the upload finishes</p>`;
   }else if(e.status==="sharing"){
     icon=`<span class="sc-ico busy"><i class="mini-spin"></i></span>`;title="Generating share link…";
   }else if(hasShareLink(e)){
@@ -71,6 +76,7 @@ export function bindShareActions(root,{find,notify,fail,dismiss,openDrive}){
         }catch{fail("Couldn't copy the link","Your browser blocked clipboard access. Use Open and copy the link from Drive.")}
         break;
       }
+      case "share":openShareMenu(b,e,{notify,fail});break;
       case "open":
         try{await chrome.tabs.create({url:e.webViewLink})}catch(err){fail("Couldn't open the link",err.message)}
         break;
@@ -91,6 +97,38 @@ export function bindShareActions(root,{find,notify,fail,dismiss,openDrive}){
       case "dismiss":dismiss?.(b.dataset.id);break;
     }
   });
+}
+
+// ---------- Share menu ----------
+const SHARE_TARGETS=[
+  ["chat","WhatsApp",(l,t)=>`https://wa.me/?text=${encodeURIComponent(`${t} ${l}`)}`],
+  ["send","Telegram",(l,t)=>`https://t.me/share/url?url=${encodeURIComponent(l)}&text=${encodeURIComponent(t)}`],
+  ["mail","Gmail",(l,t)=>`https://mail.google.com/mail/?view=cm&fs=1&su=${encodeURIComponent(t)}&body=${encodeURIComponent(l)}`],
+  ["mail","Email app",(l,t)=>`mailto:?subject=${encodeURIComponent(t)}&body=${encodeURIComponent(l)}`],
+];
+let shareMenu=null;
+function closeShareMenu(){shareMenu?.remove();shareMenu=null}
+document.addEventListener("click",ev=>{if(shareMenu&&!shareMenu.contains(ev.target)&&!ev.target.closest('[data-act="share"]')) closeShareMenu()});
+document.addEventListener("keydown",ev=>{if(ev.key==="Escape") closeShareMenu()});
+
+function openShareMenu(btn,e,{notify,fail}){
+  if(shareMenu){closeShareMenu();return}
+  const title=e.kind==="recording"?"Screen recording":"Screenshot";
+  const items=SHARE_TARGETS.map(([ic,label,make])=>[ic,label,()=>chrome.tabs.create({url:make(e.webViewLink,title)})]);
+  // The system share sheet, where this Chrome supports it.
+  if(navigator.share) items.push(["share","More options…",()=>navigator.share({title,text:title,url:e.webViewLink})]);
+  shareMenu=document.createElement("div");
+  shareMenu.className="menu";shareMenu.setAttribute("role","menu");
+  shareMenu.innerHTML=items.map(([ic,label],i)=>`<button data-i="${i}" role="menuitem"><span>${ICONS[ic]}</span>${label}</button>`).join("");
+  shareMenu.querySelectorAll("button").forEach(b=>b.onclick=async ev=>{
+    ev.stopPropagation();const [,label,run]=items[b.dataset.i];closeShareMenu();
+    try{await run()}catch(err){if(err?.name!=="AbortError") fail(`Couldn't open ${label}`,err.message)}
+  });
+  document.body.appendChild(shareMenu);
+  const r=btn.getBoundingClientRect();
+  const below=r.bottom+4+shareMenu.offsetHeight<=window.innerHeight;
+  shareMenu.style.top=`${below?r.bottom+4:Math.max(8,r.top-4-shareMenu.offsetHeight)}px`;
+  shareMenu.style.left=`${Math.min(Math.max(8,r.left),window.innerWidth-shareMenu.offsetWidth-8)}px`;
 }
 
 // Icon-only copy button for compact lists.

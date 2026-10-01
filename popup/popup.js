@@ -32,7 +32,7 @@ const date=t=>new Date(t).toLocaleDateString(undefined,{month:"short",day:"numer
 
 function activityTitle(e){
   const what=e.kind==="recording"?"Recording":"Screenshot";
-  return {uploaded:hasShareLink(e)?`${what} ready`:`${what} uploaded`,local:`${what} saved`,uploading:`Uploading ${what.toLowerCase()}… ${e.progress||0}%`,
+  return {uploaded:hasShareLink(e)?`${what} ready`:`${what} uploaded`,local:`${what} saved`,uploading:hasShareLink(e)?`Link ready — uploading ${e.progress||0}%`:`Uploading ${what.toLowerCase()}… ${e.progress||0}%`,
     sharing:"Generating share link…",share_failed:e.sharePolicy?"Uploaded — public sharing blocked":"Uploaded — link not generated",
     saving:`Saving ${what.toLowerCase()}…`,failed:`${what} failed`}[e.status]||what;
 }
@@ -116,7 +116,7 @@ function renderRecording(){
   $("#infoAudio").textContent=info.systemAudio?"On":"Off";
   tick();
 }
-const SHOT_STAGE={uploading:["Uploading screenshot…","Saving your screenshot to Google Drive."],sharing:["Generating share link…","Making the file viewable by anyone with the link."]};
+const SHOT_STAGE={sharing:["Generating share link…","Creating your Google Drive link before uploading."],uploading:["Uploading screenshot…","Saving your screenshot to Google Drive."]};
 function renderCapturing(){
   const [t,x]=SHOT_STAGE[S.shotStage]||["Capturing screenshot…","Please wait while we capture your current tab."];
   $("#view-capturing h2").textContent=t;$("#view-capturing .capture p").textContent=x;
@@ -210,14 +210,14 @@ $("#screenshot").onclick=async()=>{
   hideBanner();go("capturing");
   try{
     const r=await send("SCREENSHOT");
-    if(view!=="capturing"||r.cancelled) return;
-    go("main");
+    if(r.cancelled) return;
+    if(view==="capturing") go("main");
     // Drive uploads are reported by the result card (ready / link failed) at the top of the main view.
     if(r.warning) banner("Google Drive upload failed",r.warning);
     else if(r.where!=="drive") toast("Screenshot saved","Saved to your Downloads folder.");
   }catch(e){
-    if(view!=="capturing") return;
-    go("main");banner("Screenshot failed",e.message);
+    if(view==="capturing") go("main");
+    banner("Screenshot failed",e.message);
   }
 };
 $("#cancelShot").onclick=()=>{send("CANCEL_SCREENSHOT").catch(()=>{});go("main")};
@@ -270,6 +270,8 @@ async function load(){S=await chrome.storage.local.get(KEYS);settings=await getS
 chrome.storage.onChanged.addListener(async(changes,area)=>{
   if(area!=="local") return;
   await load();applyAppearance();
+  // Link first: as soon as the screenshot's link exists, show it (with Copy/Share) while the upload finishes.
+  if(view==="capturing"&&S.shotStage==="uploading") view="main";
   if(view==="history"&&!$("#menu").classList.contains("hidden")) return; // don't re-render under an open menu
   render();
 });

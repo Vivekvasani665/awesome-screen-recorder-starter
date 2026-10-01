@@ -1,5 +1,5 @@
-import {getToken,getFolders,getAccountEmail,saveFile,shareUploadedFile} from "../lib/drive.js";
-import {addHistory,getHistory,updateHistory,makeThumb,stamp} from "../lib/history.js";
+import {getToken,getFolders,getAccountEmail,saveFile,shareUploadedFile,deleteDriveFile} from "../lib/drive.js";
+import {addHistory,getHistory,updateHistory,removeHistory,makeThumb,stamp} from "../lib/history.js";
 
 const IDLE={recording:false,paused:false,startedAt:null,pausedAt:null,totalPaused:0,recorderWindowId:null,recInfo:null,saving:false};
 
@@ -27,18 +27,25 @@ async function screenshot(){
     let thumb;
     try{const bmp=await createImageBitmap(blob);thumb=await makeThumb(bmp,bmp.width,bmp.height);bmp.close()}catch{}
     const name=`Screenshot ${stamp()}.png`;
-    await chrome.storage.local.set({shotStage:"uploading"});
-    const r=await saveFile({blob,url:dataUrl,name,mimeType:"image/png",kind:"screenshots",signal});
+    await chrome.storage.local.set({shotStage:"sharing"});
+    // Link first: the history entry (with its share link) appears before the image upload starts.
+    let id=null;
+    const onLink=async({fileId,driveUrl,share})=>{
+      id=await addHistory({kind:"screenshot",name,size:blob.size,thumb,status:"uploading",progress:0,fileId,driveUrl,...share});
+      await chrome.storage.local.set({shotStage:"uploading"});
+    };
+    let r;
+    try{r=await saveFile({blob,url:dataUrl,name,mimeType:"image/png",kind:"screenshots",signal,onLink})}
+    catch(e){if(id) await removeHistory(id);throw e} // cancelled: the Drive placeholder was already deleted
     if(r.where!=="drive"){
-      const id=await addHistory({kind:"screenshot",name,size:blob.size,thumb,status:"local",downloadId:r.downloadId,error:r.warning});
+      const local={status:"local",downloadId:r.downloadId,error:r.warning,fileId:null,driveUrl:null,shared:false,webViewLink:null};
+      if(id) await updateHistory(id,local);
+      else id=await addHistory({kind:"screenshot",name,size:blob.size,thumb,...local});
       return {...r,id};
     }
-    // Uploaded: the link is only "ready" once the public permission and metadata calls succeed.
-    const id=await addHistory({kind:"screenshot",name,size:blob.size,thumb,status:"sharing",fileId:r.fileId,driveUrl:r.webViewLink,downloadId:r.downloadId});
-    await chrome.storage.local.set({shotStage:"sharing"});
-    const patch=await shareUploadedFile(r.fileId);
+    const patch={status:r.share.shared?"uploaded":"share_failed",progress:100,downloadId:r.downloadId};
     await updateHistory(id,patch);
-    return {...r,id,...patch};
+    return {...r,id,...r.share,...patch};
   }finally{screenshotAbort=null;await chrome.storage.local.set({shotStage:null})}
 }
 
@@ -85,8 +92,13 @@ async function failInterrupted(kinds){
   const h=await getHistory();
   const fix=e=>{
     if(!kinds.includes(e.kind)) return e;
-    if(e.status==="uploading"||e.status==="saving") return {...e,status:"failed",error:"Saving was interrupted before it finished."};
-    if(e.status==="sharing") return {...e,status:"share_failed",shareError:"Link generation was interrupted."};
+    if(e.status==="uploading"||e.status==="saving"){
+      // The link-first placeholder never received its content; remove it so the shared link isn't left pointing at an empty file.
+      if(e.fileId) deleteDriveFile(e.fileId).catch(()=>{});
+      return {...e,status:"failed",error:"Saving was interrupted before it finished.",fileId:null,shared:false,webViewLink:null};
+    }
+    if(e.status==="sharing") return e.fileId?{...e,status:"share_failed",shareError:"Link generation was interrupted."}
+      :{...e,status:"failed",error:"Saving was interrupted before it finished."};
     return e;
   };
   const next=h.map(fix);
