@@ -1,20 +1,139 @@
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Recorder</title><link rel="stylesheet" href="popup.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Awesome Screen Recorder</title><link rel="stylesheet" href="popup.css"></head>
 <body>
-  <main class="app">
-    <header><div><h1>Screen Recorder</h1><p id="status">Ready</p></div><button id="settings" class="icon">⚙</button></header>
-    <section class="drive"><span>☁️ Google Drive</span><span id="driveStatus">Checking…</span></section>
-    <button id="connect" class="secondary">Connect Google Drive</button>
-    <button id="record" class="primary">🔴 Record Screen</button>
-    <button id="screenshot" class="secondary">📸 Screenshot</button>
-    <section id="recordingControls" class="controls hidden">
-      <span id="timer">00:00</span>
-      <button id="pause">Pause</button>
-      <button id="stop">Stop</button>
+  <div id="toast" class="toast hidden" role="status">
+    <span class="toast-icon" data-icon="check"></span>
+    <div><strong id="toastTitle"></strong><p id="toastText"></p></div>
+    <button class="toast-close" data-icon="x" aria-label="Dismiss"></button>
+  </div>
+
+  <!-- 1/2/5/6. Main -->
+  <main id="view-main" class="view">
+    <div id="banner" class="banner hidden" role="alert">
+      <span class="banner-icon" data-icon="x"></span>
+      <div><strong id="bannerTitle"></strong><p id="bannerText"></p></div>
+      <button class="banner-close" data-icon="x" aria-label="Dismiss"></button>
+    </div>
+    <header class="top">
+      <span class="logo" data-icon="video"></span>
+      <div class="title"><h1>Screen Recorder</h1><p>Ready</p></div>
+      <button class="icon-btn" data-go="settings" aria-label="Settings"><span data-icon="gear"></span></button>
+    </header>
+
+    <section class="card drive">
+      <div class="drive-head">
+        <span class="drive-logo" data-icon="drive"></span>
+        <div><h2>Google Drive</h2><p class="dot-status"><i class="dot"></i><span id="driveStatus">Not connected</span></p></div>
+      </div>
+      <p id="driveEmail" class="email hidden"></p>
+      <p id="driveHint" class="hint">Save your recordings and screenshots directly to Google Drive.</p>
+      <button id="connect" class="btn btn-primary"><span class="g-badge" data-icon="google"></span><span>Connect Google Drive</span></button>
+      <button id="openDrive" class="btn btn-outline hidden"><span>Open Drive</span><span class="ico-sm" data-icon="external"></span></button>
     </section>
-    <div id="message" class="message"></div>
+
+    <button id="record" class="action action-primary">
+      <span class="action-ico rec" data-icon="recDot"></span>
+      <span><strong>Record Screen</strong><small>Capture your screen</small></span>
+    </button>
+    <button id="screenshot" class="action">
+      <span class="action-ico" data-icon="camera"></span>
+      <span><strong>Screenshot</strong><small>Capture current tab</small></span>
+    </button>
+
+    <section class="card recent">
+      <div class="card-head"><span class="ico-sm" data-icon="clock"></span><h3>Recent Activity</h3><button class="link" data-go="history">View all</button></div>
+      <ul id="recentList" class="activity"></ul>
+    </section>
+
+    <footer class="foot"><span>Awesome Screen Recorder</span><span class="version"></span></footer>
   </main>
-<script src="popup.js"></script>
+
+  <!-- 3. Recording -->
+  <main id="view-recording" class="view rec-view hidden">
+    <header class="top">
+      <span class="logo logo-red"><i class="ring"></i></span>
+      <div class="title"><h1>Screen Recorder</h1><p id="recStatus">Recording…</p></div>
+      <button class="icon-btn icon-btn-dark" data-go="settings" aria-label="Settings"><span data-icon="gear"></span></button>
+    </header>
+    <section class="timer-card">
+      <div id="recTimer" class="timer">00:00:00</div>
+      <div id="recWave" class="wave"></div>
+      <p class="timer-sub"><span class="ico-sm" data-icon="monitor"></span><span id="recSub">Recording your screen</span></p>
+    </section>
+    <div class="rec-actions">
+      <button id="pause" class="btn btn-dark"><span class="ico-sm" data-icon="pause"></span><span>Pause</span></button>
+      <button id="stop" class="btn btn-danger"><span class="ico-sm" data-icon="stop"></span><span>Stop</span></button>
+    </div>
+    <section class="card rec-info">
+      <div class="info-row"><span class="info-ico" data-icon="monitor"></span><div><strong id="infoSurface">Screen</strong><small id="infoSurfaceSub">Entire screen</small></div></div>
+      <div class="info-row"><span class="info-ico" data-icon="mic"></span><div><strong>Microphone</strong><small id="infoMic">Off</small></div></div>
+      <div class="info-row"><span class="info-ico" data-icon="volume"></span><div><strong>System Audio</strong><small id="infoAudio">Off</small></div></div>
+      <p class="info-note"><span class="ico-sm" data-icon="info"></span>Recording will continue even if you close this popup.</p>
+    </section>
+  </main>
+
+  <!-- 4. Capturing screenshot -->
+  <main id="view-capturing" class="view hidden">
+    <header class="top">
+      <span class="logo" data-icon="video"></span>
+      <div class="title"><h1>Screen Recorder</h1><p>Ready</p></div>
+      <span></span>
+    </header>
+    <section class="card capture">
+      <div class="spinner"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><circle class="arc" cx="50" cy="50" r="44"/></svg><span data-icon="camera"></span></div>
+      <h2>Capturing screenshot…</h2>
+      <p>Please wait while we capture your current tab.</p>
+      <button id="cancelShot" class="btn btn-outline">Cancel</button>
+    </section>
+  </main>
+
+  <!-- 7. Settings -->
+  <main id="view-settings" class="view hidden">
+    <header class="sub-top"><button class="icon-btn back" data-go="main" aria-label="Back"><span data-icon="back"></span></button><h1>Settings</h1></header>
+    <section class="group">
+      <h3><span class="group-ico" data-icon="video"></span>Recording</h3>
+      <label class="row"><span class="row-ico" data-icon="monitor"></span><span>Video quality</span>
+        <select data-setting="quality"><option value="720">720p (HD)</option><option value="1080">1080p (Full HD)</option><option value="1440">1440p (QHD)</option><option value="native">Native</option></select></label>
+      <label class="row"><span class="row-ico" data-icon="clock"></span><span>Frame rate</span>
+        <select data-setting="fps" data-num><option value="30">30 fps</option><option value="60">60 fps</option></select></label>
+      <label class="row"><span class="row-ico" data-icon="activity"></span><span>Video bitrate</span>
+        <select data-setting="bitrate" data-num><option value="2500000">2.5 Mbps</option><option value="4500000">4.5 Mbps</option><option value="8000000">8 Mbps</option><option value="12000000">12 Mbps</option></select></label>
+      <label class="row"><span class="row-ico" data-icon="mic"></span><span>Microphone</span><input type="checkbox" class="switch" data-setting="microphone"></label>
+      <label class="row"><span class="row-ico" data-icon="volume"></span><span>System audio</span><input type="checkbox" class="switch" data-setting="systemAudio"></label>
+      <label class="row"><span class="row-ico" data-icon="file"></span><span>Recording format</span>
+        <select data-setting="format"><option value="webm">WebM (recommended)</option><option value="mp4">MP4</option></select></label>
+    </section>
+    <section class="group">
+      <h3><span class="group-ico" data-icon="cloud"></span>Storage</h3>
+      <div class="row"><span class="row-ico" data-icon="drive"></span><span>Google Drive</span><button id="driveToggle" class="row-btn"></button></div>
+      <label class="row"><span class="row-ico" data-icon="folder"></span><span>Drive folder</span><input id="folderPrefix" class="row-input" placeholder="Awesome Screen Recorder"></label>
+      <label class="row"><span class="row-ico" data-icon="upload"></span><span>Auto upload</span><input type="checkbox" class="switch" data-setting="autoUpload"></label>
+      <label class="row"><span class="row-ico" data-icon="download"></span><span>Keep local copy</span><input type="checkbox" class="switch" data-setting="keepLocal"></label>
+    </section>
+    <section class="group">
+      <h3><span class="group-ico" data-icon="palette"></span>Appearance</h3>
+      <label class="row"><span class="row-ico" data-icon="sun"></span><span>Theme</span>
+        <select data-setting="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+      <label class="row"><span class="row-ico" data-icon="rows"></span><span>Compact mode</span><input type="checkbox" class="switch" data-setting="compact"></label>
+    </section>
+    <section class="group">
+      <h3><span class="group-ico" data-icon="info"></span>About</h3>
+      <div class="row"><span class="row-ico"></span><span>Version</span><span class="row-value version"></span></div>
+    </section>
+  </main>
+
+  <!-- 8. History -->
+  <main id="view-history" class="view hidden">
+    <header class="sub-top"><button class="icon-btn back" data-go="main" aria-label="Back"><span data-icon="back"></span></button><h1>History</h1></header>
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="recording" role="tab">Recordings</button>
+      <button class="tab" data-tab="screenshot" role="tab">Screenshots</button>
+    </div>
+    <ul id="historyList" class="history"></ul>
+  </main>
+
+  <div id="menu" class="menu hidden" role="menu"></div>
+<script type="module" src="popup.js"></script>
 </body>
 </html>

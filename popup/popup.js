@@ -1,37 +1,267 @@
+import {ICONS,fillIcons,waveBars,clock,pad} from "./icons.js";
+import {getSettings,saveSettings} from "../lib/settings.js";
+import {removeHistory} from "../lib/history.js";
+
 const $=s=>document.querySelector(s);
-const msg=(t,type="")=>{const e=$("#message");e.textContent=t;e.className=`message ${type}`};
+const $$=s=>[...document.querySelectorAll(s)];
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+const isPage=new URLSearchParams(location.search).get("view")==="settings"; // opened as the options page
+
+let S={};            // chrome.storage.local snapshot
+let settings={};
+let view=isPage?"settings":"main";
+let historyTab="recording";
+let toastTimer=null;
+
 async function send(type,data={}){
   const r=await chrome.runtime.sendMessage({type,...data});
   if(r?.error) throw new Error(r.error);
   return r;
 }
-const format=n=>{n=Math.max(0,Math.floor(n/1000));return `${String(Math.floor(n/60)).padStart(2,"0")}:${String(n%60).padStart(2,"0")}`};
-async function refresh(){
-  const s=await send("GET_STATE");
-  $("#driveStatus").textContent=s.connected?"Connected":"Not connected (saves to Downloads)";
-  $("#connect").classList.toggle("hidden",!!s.connected);
-  $("#record").disabled=!!s.recording;
-  $("#screenshot").disabled=!!s.recording;
-  $("#recordingControls").classList.toggle("hidden",!s.recording);
-  $("#pause").textContent=s.paused?"Resume":"Pause";
-  $("#status").textContent=s.recording?(s.paused?"Paused":"Recording…"):"Ready";
-  if(s.recording&&s.startedAt) $("#timer").textContent=format((s.paused?s.pausedAt:Date.now())-s.startedAt-(s.totalPaused||0));
+
+// ---------- formatting ----------
+function ago(t){
+  const s=Math.round((Date.now()-t)/1000);
+  if(s<45) return "Just now";
+  const m=Math.round(s/60); if(m<60) return `${m} minute${m>1?"s":""} ago`;
+  const h=Math.round(m/60); if(h<24) return `${h} hour${h>1?"s":""} ago`;
+  const d=Math.round(h/24); return d<7?`${d} day${d>1?"s":""} ago`:new Date(t).toLocaleDateString();
 }
-$("#connect").onclick=async()=>{try{msg("Connecting…");await send("CONNECT_DRIVE");msg("Google Drive connected","ok");await refresh()}catch(e){msg(e.message,"error")}};
-$("#record").onclick=async()=>{try{await send("START_RECORDING");window.close()}catch(e){msg(e.message,"error")}};
-$("#screenshot").onclick=async()=>{
+const date=t=>new Date(t).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"});
+function size(b){
+  if(!b) return "";
+  const u=["B","KB","MB","GB"];let i=0;while(b>=1024&&i<u.length-1){b/=1024;i++}
+  return `${b.toFixed(i>1?1:0)} ${u[i]}`;
+}
+const duration=ms=>{const s=Math.round(ms/1000);return s>=3600?clock(ms):`${pad(Math.floor(s/60))}:${pad(s%60)}`};
+
+function activityTitle(e){
+  const what=e.kind==="recording"?"Recording":"Screenshot";
+  return {uploaded:`${what} uploaded`,local:`${what} saved`,uploading:`Uploading ${what.toLowerCase()}… ${e.progress||0}%`,
+    saving:`Saving ${what.toLowerCase()}…`,failed:`${what} failed`}[e.status]||what;
+}
+const pillText=e=>({uploaded:"Uploaded",local:"Saved locally",uploading:`Uploading ${e.progress||0}%`,saving:"Saving…",failed:"Failed"})[e.status]||"";
+
+// ---------- toast / banner ----------
+function toast(title,text){
+  $("#toastTitle").textContent=title;$("#toastText").textContent=text||"";
+  $("#toast").classList.remove("hidden");
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>$("#toast").classList.add("hidden"),4000);
+}
+function banner(title,text){
+  $("#bannerTitle").textContent=title;$("#bannerText").textContent=text||"";
+  $("#banner").classList.remove("hidden");
+}
+const hideBanner=()=>$("#banner").classList.add("hidden");
+$(".toast-close").onclick=()=>$("#toast").classList.add("hidden");
+$(".banner-close").onclick=hideBanner;
+
+// ---------- rendering ----------
+function applyAppearance(){
+  if(settings.theme==="system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme=settings.theme;
+  document.body.classList.toggle("compact",!!settings.compact);
+}
+
+function go(v){view=v;closeMenu();render();window.scrollTo(0,0)}
+
+function render(){
+  const current=view==="main"&&S.recording?"recording":view;
+  for(const v of ["main","recording","capturing","settings","history"]) $(`#view-${v}`).classList.toggle("hidden",v!==current);
+  document.body.classList.toggle("recording",current==="recording");
+  if(current==="main") renderMain();
+  if(current==="recording") renderRecording();
+  if(current==="settings") renderSettings();
+  if(current==="history") renderHistory();
+}
+
+function renderMain(){
+  const connected=!!S.driveConnected;
+  $(".drive").classList.toggle("connected",connected);
+  $("#driveStatus").textContent=connected?"Connected":"Not connected";
+  $("#driveEmail").textContent=S.driveEmail||"";
+  $("#driveEmail").classList.toggle("hidden",!connected||!S.driveEmail);
+  $("#driveHint").textContent=!connected?"Save your recordings and screenshots directly to Google Drive."
+    :settings.autoUpload?"Files are saved automatically to Google Drive.":"Auto upload is off — files are saved to Downloads.";
+  $("#connect").classList.toggle("hidden",connected);
+  $("#openDrive").classList.toggle("hidden",!connected);
+
+  const picking=!!S.recorderWindowId&&!S.recording&&!S.saving;
+  $("#record").disabled=!!S.saving;
+  $("#record strong").textContent=S.saving?"Saving recording…":picking?"Choose what to record…":"Record Screen";
+  $("#record small").textContent=S.saving?"Wait for the upload to finish":picking?"Finish in the recorder window":"Capture your screen";
+
+  const items=(S.history||[]).slice(0,3);
+  $("#recentList").innerHTML=items.length?items.map(e=>`
+    <li data-id="${esc(e.id)}" title="${esc(e.error||e.name)}">
+      <span class="a-ico${e.status==="failed"?" failed":""}">${ICONS[e.kind==="recording"?"video":"image"]}</span>
+      <div><strong>${esc(activityTitle(e))}</strong><small>${esc(ago(e.createdAt))}</small></div>
+    </li>`).join("")
+    :`<li class="empty" style="cursor:default"><div style="width:100%"><strong>No recent activity</strong>Your recordings and screenshots will appear here.</div></li>`;
+}
+
+const SURFACE={screen:["Screen","Entire screen"],window:["Window","Application window"],tab:["Tab","Browser tab"]};
+function renderRecording(){
+  const info=S.recInfo||{};
+  const [name,sub]=SURFACE[info.surface]||SURFACE.screen;
+  $("#recStatus").textContent=S.paused?"Paused":"Recording…";
+  $("#recSub").textContent=S.paused?"Recording paused":`Recording your ${name.toLowerCase()}`;
+  $("#recWave").classList.toggle("paused",!!S.paused);
+  $("#pause span:last-child").textContent=S.paused?"Resume":"Pause";
+  $("#pause .ico-sm").innerHTML=ICONS[S.paused?"play":"pause"];
+  $("#infoSurface").textContent=name;$("#infoSurfaceSub").textContent=sub;
+  $("#infoMic").textContent=info.mic?"On":"Off";
+  $("#infoAudio").textContent=info.systemAudio?"On":"Off";
+  tick();
+}
+function tick(){
+  if(!S.recording||!S.startedAt) return;
+  $("#recTimer").textContent=clock((S.paused?S.pausedAt:Date.now())-S.startedAt-(S.totalPaused||0));
+}
+
+function renderSettings(){
+  for(const el of $$("[data-setting]")){
+    const v=settings[el.dataset.setting];
+    if(el.type==="checkbox") el.checked=!!v; else el.value=String(v);
+  }
+  const fp=$("#folderPrefix");
+  if(document.activeElement!==fp) fp.value=S.folderPrefix||"";
+  const t=$("#driveToggle");
+  t.textContent=S.driveConnected?"Disconnect":"Connect";
+  t.classList.toggle("off",!S.driveConnected);
+  t.title=S.driveConnected?(S.driveEmail?`Connected as ${S.driveEmail}`:"Connected"):"Not connected";
+}
+
+function renderHistory(){
+  $$(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===historyTab));
+  const items=(S.history||[]).filter(e=>e.kind===historyTab);
+  $("#historyList").innerHTML=items.length?items.map(e=>{
+    const meta=[date(e.createdAt),size(e.size),e.duration?duration(e.duration):""].filter(Boolean).join(" • ");
+    const thumb=e.thumb?`<img class="thumb" src="${esc(e.thumb)}" alt="">`
+      :`<span class="thumb thumb-ph"><span>${ICONS[e.kind==="recording"?"video":"image"]}</span></span>`;
+    const bar=e.status==="uploading"?`<div class="bar"><i style="width:${e.progress||0}%"></i></div>`:"";
+    return `<li data-id="${esc(e.id)}" title="${esc(e.error||"")}">${thumb}
+      <div class="h-body"><strong>${esc(e.name)}</strong><small>${esc(meta)}</small><span class="pill ${esc(e.status)}">${esc(pillText(e))}</span>${bar}</div>
+      <button class="more" data-menu="${esc(e.id)}" aria-label="More actions">${ICONS.more}</button></li>`;
+  }).join("")
+  :`<li class="empty" style="cursor:default;border:0"><div style="width:100%"><strong>No ${historyTab==="recording"?"recordings":"screenshots"} yet</strong>They will appear here after you capture them.</div></li>`;
+}
+
+// ---------- item actions ----------
+const findItem=id=>(S.history||[]).find(e=>e.id===id);
+async function openItem(e){
+  if(!e) return;
+  if(e.webViewLink) return chrome.tabs.create({url:e.webViewLink});
+  if(e.downloadId!=null){try{chrome.downloads.show(e.downloadId);return}catch{}}
+  if(e.error) banner(e.status==="failed"?"Save failed":"Upload failed",e.error);
+}
+
+function closeMenu(){$("#menu").classList.add("hidden")}
+function openMenu(btn,e){
+  const opts=[];
+  if(e.webViewLink) opts.push(["external","Open in Google Drive",()=>chrome.tabs.create({url:e.webViewLink})]);
+  if(e.downloadId!=null) opts.push(["folder","Show in folder",()=>chrome.downloads.show(e.downloadId)]);
+  opts.push(["trash","Remove from history",()=>removeHistory(e.id),"danger"]);
+  const m=$("#menu");
+  m.innerHTML=opts.map(([ic,label,,cls],i)=>`<button data-i="${i}" class="${cls||""}"><span>${ICONS[ic]}</span>${label}</button>`).join("");
+  m.querySelectorAll("button").forEach(b=>b.onclick=ev=>{ev.stopPropagation();closeMenu();opts[b.dataset.i][2]()});
+  m.classList.remove("hidden");
+  const r=btn.getBoundingClientRect();
+  m.style.top=`${Math.min(r.bottom+4,window.innerHeight-m.offsetHeight-8)}px`;
+  m.style.left=`${Math.max(8,r.right-m.offsetWidth)}px`;
+}
+
+// ---------- events ----------
+document.addEventListener("click",ev=>{
+  const goBtn=ev.target.closest("[data-go]");
+  if(goBtn){go(goBtn.dataset.go);return}
+  if(!ev.target.closest("#menu")) closeMenu();
+});
+
+$("#connect").onclick=async()=>{
+  const b=$("#connect");b.disabled=true;b.lastElementChild.textContent="Connecting…";hideBanner();
   try{
-    msg("Capturing screenshot…");
+    const r=await send("CONNECT_DRIVE");
+    toast("Google Drive connected",r.email?`Signed in as ${r.email}`:"Files will be saved to your Drive.");
+  }catch(e){banner("Google Drive connection failed",e.message||"Please try again or check your internet connection.")}
+  finally{b.disabled=false;b.lastElementChild.textContent="Connect Google Drive"}
+};
+$("#openDrive").onclick=()=>chrome.tabs.create({url:S.rootFolderId?`https://drive.google.com/drive/folders/${S.rootFolderId}`:"https://drive.google.com/drive/my-drive"});
+
+$("#record").onclick=async()=>{
+  hideBanner();
+  try{await send("START_RECORDING");if(!isPage) window.close()}
+  catch(e){banner("Could not start recording",e.message)}
+};
+
+$("#screenshot").onclick=async()=>{
+  hideBanner();go("capturing");
+  try{
     const r=await send("SCREENSHOT");
-    if(r.warning) msg(r.warning,"error");
-    else msg(r.where==="drive"?"Screenshot uploaded to Google Drive":"Screenshot saved to Downloads","ok");
-  }catch(e){msg(e.message,"error")}
+    if(view!=="capturing"||r.cancelled) return;
+    go("main");
+    if(r.warning) banner("Google Drive upload failed",r.warning);
+    else toast("Screenshot saved",r.where==="drive"?"Your file has been uploaded to Google Drive.":"Saved to your Downloads folder.");
+  }catch(e){
+    if(view!=="capturing") return;
+    go("main");banner("Screenshot failed",e.message);
+  }
 };
-$("#pause").onclick=async()=>{try{await chrome.runtime.sendMessage({type:"REC_PAUSE"});await refresh()}catch(e){msg("Recorder window not found.","error")}};
-$("#stop").onclick=async()=>{try{await chrome.runtime.sendMessage({type:"REC_STOP"});msg("Stopping… the recorder window will show when it's saved.","ok")}catch(e){msg("Recorder window not found.","error")}};
-$("#settings").onclick=async()=>{
-  try{await chrome.runtime.openOptionsPage()}
-  catch{await chrome.tabs.create({url:chrome.runtime.getURL("settings/settings.html")})}
-  window.close();
+$("#cancelShot").onclick=()=>{send("CANCEL_SCREENSHOT").catch(()=>{});go("main")};
+
+$("#pause").onclick=()=>chrome.runtime.sendMessage({type:"REC_PAUSE"}).catch(()=>banner("Recorder window not found",""));
+$("#stop").onclick=()=>chrome.runtime.sendMessage({type:"REC_STOP"}).catch(()=>banner("Recorder window not found",""));
+
+$("#recentList").onclick=ev=>{const li=ev.target.closest("li[data-id]");if(li) openItem(findItem(li.dataset.id))};
+$("#historyList").onclick=ev=>{
+  const more=ev.target.closest("[data-menu]");
+  if(more){ev.stopPropagation();openMenu(more,findItem(more.dataset.menu));return}
+  const li=ev.target.closest("li[data-id]");if(li) openItem(findItem(li.dataset.id));
 };
-setInterval(()=>refresh().catch(()=>{}),500);refresh().catch(e=>msg(e.message,"error"));
+$$(".tab").forEach(t=>t.onclick=()=>{historyTab=t.dataset.tab;renderHistory()});
+
+for(const el of $$("[data-setting]")){
+  el.onchange=async()=>{
+    const k=el.dataset.setting;
+    const v=el.type==="checkbox"?el.checked:"num" in el.dataset?Number(el.value):el.value;
+    settings=await saveSettings({[k]:v});
+    applyAppearance();
+  };
+}
+const saveFolder=async()=>{
+  const v=$("#folderPrefix").value.trim();
+  // Drive folder ids are looked up by name on every upload; the cached root id only powers "Open Drive".
+  if(v!==(S.folderPrefix||"")) await chrome.storage.local.set({folderPrefix:v,rootFolderId:null});
+};
+$("#folderPrefix").onchange=saveFolder;
+$("#folderPrefix").onkeydown=e=>{if(e.key==="Enter") e.target.blur()};
+$("#driveToggle").onclick=async()=>{
+  const b=$("#driveToggle");b.disabled=true;
+  try{
+    if(S.driveConnected){await send("DISCONNECT_DRIVE");toast("Google Drive disconnected","Files will be saved to Downloads.")}
+    else{const r=await send("CONNECT_DRIVE");toast("Google Drive connected",r.email?`Signed in as ${r.email}`:"")}
+  }catch(e){go("main");banner("Google Drive connection failed",e.message)}
+  finally{b.disabled=false}
+};
+
+// ---------- boot ----------
+const KEYS=["recording","saving","paused","startedAt","pausedAt","totalPaused","recorderWindowId","recInfo","driveConnected","driveEmail","rootFolderId","folderPrefix","history"];
+async function load(){S=await chrome.storage.local.get(KEYS);settings=await getSettings()}
+
+chrome.storage.onChanged.addListener(async(changes,area)=>{
+  if(area!=="local") return;
+  await load();applyAppearance();
+  if(view==="history"&&!$("#menu").classList.contains("hidden")) return; // don't re-render under an open menu
+  render();
+});
+
+fillIcons();
+$("#recWave").innerHTML=waveBars();
+$$(".version").forEach(e=>e.textContent=`v${chrome.runtime.getManifest().version}`);
+if(isPage) document.body.classList.add("page");
+// MP4 recording is only offered where this Chrome's MediaRecorder supports it.
+if(!["video/mp4;codecs=avc1,mp4a.40.2","video/mp4"].some(t=>MediaRecorder.isTypeSupported(t))){
+  const o=$('[data-setting="format"] option[value="mp4"]');o.disabled=true;o.textContent="MP4 (not supported)";
+}
+await load();applyAppearance();render();
+setInterval(()=>{if(S.recording&&view==="main") tick()},500);

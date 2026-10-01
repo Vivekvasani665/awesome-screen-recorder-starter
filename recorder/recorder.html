@@ -1,15 +1,23 @@
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>Recorder</title><link rel="stylesheet" href="../popup/popup.css"><style>body{width:auto}</style></head>
-<body>
-  <main class="app">
-    <header><div><h1>Screen Recorder</h1><p id="status">Choose what to record…</p></div></header>
-    <section id="controls" class="controls hidden">
-      <span id="timer">00:00</span>
-      <button id="pause">Pause</button>
-      <button id="stop">Stop</button>
+<head><meta charset="utf-8"><title>Recorder</title><link rel="stylesheet" href="../popup/popup.css"></head>
+<body class="recorder recording">
+  <main class="view rec-view">
+    <header class="top">
+      <span class="logo logo-red"><i class="ring"></i></span>
+      <div class="title"><h1>Screen Recorder</h1><p id="status">Choose what to record…</p></div>
+    </header>
+    <section class="timer-card">
+      <div id="timer" class="timer">00:00:00</div>
+      <div id="wave" class="wave paused"></div>
+      <p class="timer-sub"><span class="ico-sm" data-icon="monitor"></span><span id="sub">Waiting for you to pick a screen</span></p>
     </section>
-    <div id="message" class="message">Keep this window open while recording. You can minimise it.</div>
+    <div id="controls" class="rec-actions hidden">
+      <button id="pause" class="btn btn-dark"><span class="ico-sm" data-icon="pause"></span><span>Pause</span></button>
+      <button id="stop" class="btn btn-danger"><span class="ico-sm" data-icon="stop"></span><span>Stop</span></button>
+    </div>
+    <div id="progress" class="rec-progress hidden"><i></i></div>
+    <p id="message" class="rec-msg">Keep this window open while recording. You can minimise it.</p>
   </main>
 <script type="module" src="recorder.js"></script>
 </body>
