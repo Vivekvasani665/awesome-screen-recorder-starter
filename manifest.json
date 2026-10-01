@@ -13,7 +13,7 @@
     "downloads"
   ],
   "oauth2": {
-    "client_id": "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+    "client_id": "599992124415-3o77pl9k26qnct9qfp4j0j00t9k3n6es.apps.googleusercontent.com",
     "scopes": [
       "https://www.googleapis.com/auth/drive.file"
     ]
