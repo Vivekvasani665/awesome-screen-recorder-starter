@@ -29,5 +29,9 @@ $("#screenshot").onclick=async()=>{
 };
 $("#pause").onclick=async()=>{try{await chrome.runtime.sendMessage({type:"REC_PAUSE"});await refresh()}catch(e){msg("Recorder window not found.","error")}};
 $("#stop").onclick=async()=>{try{await chrome.runtime.sendMessage({type:"REC_STOP"});msg("Stopping… the recorder window will show when it's saved.","ok")}catch(e){msg("Recorder window not found.","error")}};
-$("#settings").onclick=()=>chrome.runtime.openOptionsPage();
+$("#settings").onclick=async()=>{
+  try{await chrome.runtime.openOptionsPage()}
+  catch{await chrome.tabs.create({url:chrome.runtime.getURL("settings/settings.html")})}
+  window.close();
+};
 setInterval(()=>refresh().catch(()=>{}),500);refresh().catch(e=>msg(e.message,"error"));
