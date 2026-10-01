@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "Awesome Screen Recorder",
   "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxMWatzvI1VoAA6qFakZ/nd3SdR5ybcnLnDdw+nUaUm1CYZOdrbWh5yL8YzlI7yOhEIfeG0Z0pZ3rwfxseB9R9aFtLBJukyFpVG8wEqv5uO9hodVHHOrDwxy0PtEJ82d7gTlSuSJeUpwb8K5wusVrfPUO6nztClN20D4pyrJ7DujFcTVHh3tD4vJu1ZrLo9tzC++iWl1OQde/+qU1mfIvN9CDndSJz5dfF60IVimbbeJgzy66YcdiqdEJ9+LKoZusPCM7dN1wDWvTd0dNLqutDC8aINkxn0wEUle+/iC12DHxEl980SLEaeV9buK/uIZZpidQgpWEDejiSmipa2lh9QIDAQAB",
   "description": "Record your screen or tab and save recordings and screenshots to Google Drive.",
   "minimum_chrome_version": "116",
   "permissions": [
