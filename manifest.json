@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Awesome Screen Recorder",
+  "version": "1.0.0",
+  "description": "Record your screen or tab and save recordings and screenshots to Google Drive.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "identity",
+    "desktopCapture",
+    "downloads"
+  ],
+  "oauth2": {
+    "client_id": "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive.file"
+    ]
+  },
+  "action": {
+    "default_title": "Awesome Screen Recorder",
+    "default_popup": "popup/popup.html"
+  },
+  "options_page": "settings/settings.html",
+  "background": {
+    "service_worker": "background/background.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  }
+}
