@@ -1,0 +1,2 @@
+# Never commit or ship the extension private key
+*.pem

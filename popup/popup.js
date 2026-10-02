@@ -82,7 +82,7 @@ function renderMain(){
   $("#driveHint").textContent=!connected?"Save your recordings and screenshots directly to Google Drive."
     :settings.autoUpload?"Files are saved automatically to Google Drive.":"Auto upload is off — files are saved to Downloads.";
   $("#connect").classList.toggle("hidden",connected);
-  $("#openDrive").classList.toggle("hidden",!connected);
+  $("#driveActions").classList.toggle("hidden",!connected);
 
   const picking=!!S.recorderWindowId&&!S.recording&&!S.saving;
   $("#record").disabled=!!S.saving;
@@ -140,12 +140,7 @@ function renderSettings(){
 }
 
 function renderHistory(){
-  const shareHandlers={find:findItem,notify:toast,fail:banner,
-  dismiss:id=>chrome.storage.local.set({dismissedCard:id}),
-  openDrive:e=>chrome.tabs.create({url:driveFileUrl(e)})};
-bindShareActions($("#view-main"),shareHandlers);
-bindShareActions($("#view-history"),{...shareHandlers,fail:(t,x)=>{go("main");banner(t,x)}});
-$$(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===historyTab));
+  $$(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===historyTab));
   const items=(S.history||[]).filter(e=>e.kind===historyTab);
   $("#historyList").innerHTML=items.length?items.map(e=>{
     const meta=[date(e.createdAt),size(e.size),e.duration?duration(e.duration):""].filter(Boolean).join(" • ");
@@ -191,12 +186,18 @@ document.addEventListener("click",ev=>{
 });
 
 $("#connect").onclick=async()=>{
-  const b=$("#connect");b.disabled=true;b.lastElementChild.textContent="Connecting…";hideBanner();
+  const b=$("#connect");b.disabled=true;b.lastElementChild.textContent="Connecting to Google Drive…";hideBanner();
   try{
     const r=await send("CONNECT_DRIVE");
-    toast("Google Drive connected",r.email?`Signed in as ${r.email}`:"Files will be saved to your Drive.");
-  }catch(e){banner("Google Drive connection failed",e.message||"Please try again or check your internet connection.")}
+    toast("✓ Google Drive connected successfully",r.email?`Signed in as ${r.email}`:"Files will be saved to your Drive.");
+  }catch(e){banner("Google Drive connection failed",e.message||"Please try again or check your internet connection.");chrome.storage.local.set({driveAuthError:null})}
   finally{b.disabled=false;b.lastElementChild.textContent="Connect Google Drive"}
+};
+$("#disconnect").onclick=async()=>{
+  const b=$("#disconnect");b.disabled=true;hideBanner();
+  try{await send("DISCONNECT_DRIVE");toast("Google Drive disconnected","Files will be saved to Downloads.")}
+  catch(e){banner("Couldn't disconnect Google Drive",e.message)}
+  finally{b.disabled=false}
 };
 $("#openDrive").onclick=()=>chrome.tabs.create({url:S.rootFolderId?`https://drive.google.com/drive/folders/${S.rootFolderId}`:"https://drive.google.com/drive/my-drive"});
 
@@ -258,13 +259,13 @@ $("#driveToggle").onclick=async()=>{
   const b=$("#driveToggle");b.disabled=true;
   try{
     if(S.driveConnected){await send("DISCONNECT_DRIVE");toast("Google Drive disconnected","Files will be saved to Downloads.")}
-    else{const r=await send("CONNECT_DRIVE");toast("Google Drive connected",r.email?`Signed in as ${r.email}`:"")}
-  }catch(e){go("main");banner("Google Drive connection failed",e.message)}
-  finally{b.disabled=false}
+    else{b.textContent="Connecting…";const r=await send("CONNECT_DRIVE");toast("✓ Google Drive connected successfully",r.email?`Signed in as ${r.email}`:"")}
+  }catch(e){go("main");banner("Google Drive connection failed",e.message);chrome.storage.local.set({driveAuthError:null})}
+  finally{b.disabled=false;b.textContent=S.driveConnected?"Disconnect":"Connect"}
 };
 
 // ---------- boot ----------
-const KEYS=["shotStage","dismissedCard","recording","saving","paused","startedAt","pausedAt","totalPaused","recorderWindowId","recInfo","driveConnected","driveEmail","rootFolderId","folderPrefix","history"];
+const KEYS=["shotStage","dismissedCard","recording","saving","paused","startedAt","pausedAt","totalPaused","recorderWindowId","recInfo","driveConnected","driveEmail","driveAuthError","rootFolderId","folderPrefix","history"];
 async function load(){S=await chrome.storage.local.get(KEYS);settings=await getSettings()}
 
 chrome.storage.onChanged.addListener(async(changes,area)=>{
@@ -285,4 +286,6 @@ if(!["video/mp4;codecs=avc1,mp4a.40.2","video/mp4"].some(t=>MediaRecorder.isType
   const o=$('[data-setting="format"] option[value="mp4"]');o.disabled=true;o.textContent="MP4 (not supported)";
 }
 await load();applyAppearance();render();
+// A Connect attempt that failed after Google's sign-in window closed this popup.
+if(S.driveAuthError&&!S.driveConnected){banner("Google Drive connection failed",S.driveAuthError);chrome.storage.local.set({driveAuthError:null})}
 setInterval(()=>{if(S.recording&&view==="main") tick()},500);

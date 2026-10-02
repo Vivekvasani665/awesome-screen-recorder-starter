@@ -4,13 +4,11 @@ Standalone Chrome Manifest V3 extension. No backend/database. It records screen/
 
 ## Setup
 
-1. Create a Google Cloud project.
-2. Enable Google Drive API.
-3. Configure Google Auth Platform / OAuth consent screen.
-4. Create an OAuth client appropriate for a Chrome extension and use the client ID in `manifest.json`.
-5. Replace `YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com`.
-6. Load this folder at `chrome://extensions` with Developer mode -> Load unpacked.
-7. Test Connect Google Drive, Record Screen, Screenshot.
+1. Load this folder at `chrome://extensions` with Developer mode -> Load unpacked.
+2. The manifest `key` keeps the extension ID fixed at `gillieeoibggeepoibmolipcnjlhpnfi` on every computer; the OAuth client in `manifest.json` is a Chrome extension client for that ID.
+3. Test Connect Google Drive, Record Screen, Screenshot.
+
+So that any Google account can connect (no Test Users), the Google Cloud project must be External and In production — see [GOOGLE_OAUTH_PRODUCTION_SETUP.md](GOOGLE_OAUTH_PRODUCTION_SETUP.md).
 
 The requested Drive scope is `https://www.googleapis.com/auth/drive.file`, which limits access to files the app creates or opens with the app.
 

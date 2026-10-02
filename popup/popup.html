@@ -30,7 +30,10 @@
       <p id="driveEmail" class="email hidden"></p>
       <p id="driveHint" class="hint">Save your recordings and screenshots directly to Google Drive.</p>
       <button id="connect" class="btn btn-primary"><span class="g-badge" data-icon="google"></span><span>Connect Google Drive</span></button>
-      <button id="openDrive" class="btn btn-outline hidden"><span>Open Drive</span><span class="ico-sm" data-icon="external"></span></button>
+      <div id="driveActions" class="drive-actions hidden">
+        <button id="openDrive" class="btn btn-outline"><span>Open Drive</span><span class="ico-sm" data-icon="external"></span></button>
+        <button id="disconnect" class="btn btn-outline">Disconnect</button>
+      </div>
     </section>
 
     <button id="record" class="action action-primary">

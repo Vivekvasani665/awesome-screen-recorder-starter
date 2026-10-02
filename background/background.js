@@ -1,4 +1,4 @@
-import {getToken,getFolders,getAccountEmail,saveFile,shareUploadedFile,deleteDriveFile} from "../lib/drive.js";
+import {connectInteractive,disconnect,explainAuthError,getFolders,getAccountEmail,saveFile,shareUploadedFile,deleteDriveFile} from "../lib/drive.js";
 import {addHistory,getHistory,updateHistory,removeHistory,makeThumb,stamp} from "../lib/history.js";
 
 const IDLE={recording:false,paused:false,startedAt:null,pausedAt:null,totalPaused:0,recorderWindowId:null,recInfo:null,saving:false};
@@ -50,15 +50,25 @@ async function screenshot(){
 }
 
 const handlers={
+  // The only place a Google sign-in window may open: the user clicked "Connect Google Drive".
   async CONNECT_DRIVE(){
-    await getToken(true);
-    const {root}=await getFolders();
-    const driveEmail=await getAccountEmail().catch(()=>"");
-    await chrome.storage.local.set({driveConnected:true,driveEmail,rootFolderId:root});
-    return {ok:true,email:driveEmail};
+    await chrome.storage.local.set({driveAuthError:null});
+    try{
+      await connectInteractive();
+      // Proves the token really works with Drive (API enabled, folders writable) before showing "Connected".
+      const {root}=await getFolders();
+      const driveEmail=await getAccountEmail().catch(()=>"");
+      await chrome.storage.local.set({driveConnected:true,driveEmail,rootFolderId:root});
+      return {ok:true,email:driveEmail};
+    }catch(e){
+      // Google's sign-in window usually closes the popup, so the reply is lost; keep the error for the next popup open.
+      const x=readable(e);
+      await chrome.storage.local.set({driveAuthError:x.message});
+      throw x;
+    }
   },
   async DISCONNECT_DRIVE(){
-    await chrome.identity.clearAllCachedAuthTokens();
+    await disconnect();
     await chrome.storage.local.set({driveConnected:false,driveEmail:"",rootFolderId:null});
     return {ok:true};
   },
@@ -79,10 +89,13 @@ const handlers={
   },
 };
 
+// DriveErrors already carry a readable message; anything from chrome.identity is translated.
+const readable=e=>e?.name==="DriveError"||!/identity|oauth|token|sign/i.test(e?.message||"")?e:explainAuthError(e);
+
 chrome.runtime.onMessage.addListener((m,s,send)=>{
   const h=handlers[m?.type];
   if(!h) return false; // REC_* messages are handled by the recorder page
-  h(m).then(send,e=>send({error:e.message}));
+  h(m).then(send,e=>send({error:readable(e).message}));
   return true;
 });
 
